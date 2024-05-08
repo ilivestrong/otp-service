@@ -34,8 +34,6 @@ func (m *sms) Send(text string, to string) {
 		Password: m.config.AuthToken,
 	})
 
-	_ = client
-
 	params := &twilioApi.CreateMessageParams{}
 	params.SetTo(to)
 	params.SetFrom(m.config.From)
