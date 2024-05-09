@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/ilivestrong/otp-service/internal/messaging"
@@ -35,13 +38,14 @@ func main() {
 	}
 
 	smsClient := messaging.NewSMSMessenger(&options.TwilioOptions)
-	mqclient := rabbitmq.NewOtpMQClient(bootMQ(&options), smsClient)
-
-	// otpService := internal.NewOtpService(eventConsumer, twilioClient)
+	amqp := bootMQ(&options)
+	mqclient := rabbitmq.NewOtpMQClient(amqp, smsClient)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	startConsumingEvents(ctx, mqclient, "SendOTP", &options.TwilioOptions)
+	go startConsumingEvents(ctx, mqclient, "SendOTP", &options.TwilioOptions)
+
+	shutdownOnSignal(amqp)
 }
 
 func bootMQ(options *Options) *amqp.Connection {
@@ -63,4 +67,24 @@ func mustGetEnv(key string) string {
 func startConsumingEvents(ctx context.Context, mqclient rabbitmq.MQClient, event string, twOptions *messaging.TwilioOptions) {
 	log.Printf("starting listening for %s events. To exit press CTRL+C\n", event)
 	mqclient.Consume(ctx, twOptions)
+}
+
+func waitForShutdownSignal() string {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+
+	sig := <-c
+
+	return sig.String()
+}
+
+func shutdownOnSignal(amqp *amqp.Connection) {
+	signalName := waitForShutdownSignal()
+	fmt.Printf("recieved signal: %s starting shutdown...\n", signalName)
+
+	if amqp != nil {
+		if err := amqp.Close(); err == nil {
+			log.Println("amqp connection closed")
+		}
+	}
 }
